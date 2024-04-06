@@ -5,6 +5,7 @@ from pathlib import Path
 from torch.optim import AdamW
 import torch
 import os
+import wandb
 
 def ce_loss(inputs, logits, mask, TO_TOKEN):
     # Shift so that tokens < n predict n
@@ -25,12 +26,12 @@ def get_optimizer(model,args):
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.1)
     return optimizer
 
-def custom_get_scheduler(optimizer,num_training_steps):
+def custom_get_scheduler(optimizer, args, num_training_steps):
 
     lr_scheduler = get_scheduler(
-        name="linear",
+        name=args.scheduler,
         optimizer=optimizer,
-        num_warmup_steps=100,
+        num_warmup_steps=args.warmup,
         num_training_steps=num_training_steps,
     )
     return lr_scheduler
@@ -55,7 +56,7 @@ def train(args,model, train_dataset, TO_TOKEN):
     num_training_steps = num_train_epochs * num_update_steps_per_epoch
     num_log_steps = 50
 
-    lr_scheduler = custom_get_scheduler(optimizer,num_training_steps)
+    lr_scheduler = custom_get_scheduler(optimizer, args, num_training_steps)
     
 
 
@@ -107,6 +108,8 @@ def train(args,model, train_dataset, TO_TOKEN):
                 break
             # Update tqdm description with the current loss
             progress_bar.set_postfix({'Loss': loss.item()})
+            if args.wandb:
+                wandb.log({'train_loss': loss.item(), "Steps": step})
 
 
 

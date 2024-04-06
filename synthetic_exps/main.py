@@ -4,6 +4,7 @@ import wandb
 import json
 import argparse
 from copy import copy
+import random
 from transformers import DataCollatorForLanguageModeling
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from datasets import load_dataset, DatasetDict
@@ -34,9 +35,24 @@ from test_utils import evaluation
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+def seed_all(seed: int):
+    """Seed all rng objects."""
+
+    if seed < 0 or seed > 2**32 - 1:
+        raise ValueError(f"Seed {seed} is invalid. It must be on [0; 2^32 - 1]")
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    # torch.manual_seed may call manual_seed_all but calling it again here
+    # to make sure it gets called at least once
+    torch.cuda.manual_seed_all(seed)
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    ##seed
+    parser.add_argument('--init_seed', default=0, type=int, help="seed for initializing model")
+    parser.add_argument('--data_seed', default=0, type=int, help="seed for setting data ordering")
 
     ##task
     parser.add_argument('--train_task',choices=["copy","prefix_ngram","suffix_ngram"],
@@ -65,7 +81,9 @@ def parse_args():
             Sets the state dimension of the model.''')
 
     #optimization
+    parser.add_argument('--scheduler', default="linear", type=str, help="choice of scheduler")
     parser.add_argument('--lr', default=1e-5, type=float, help="choice of learning rate")
+    parser.add_argument('--warmup', default=500, type=int, help="number of warmup steps")
     parser.add_argument('--epochs', default=1, type=int, help="number of epochs")
     parser.add_argument('--steps', default=2000, type=int, help="number of steps for each epoch")
     
@@ -79,12 +97,18 @@ def parse_args():
     parser.add_argument('--max_train_len', default=20, type=int, help="maximum length of a training example")
     parser.add_argument('--min_eval_len', default=10, type=int, help="minimum length of an evaluation example")
     parser.add_argument('--max_eval_len', default=20, type=int, help="maximum length of an evaluation example")
+    parser.add_argument('--eval_len_interval', default=1, type=int, help="interval of eval length")
     
 
     ##context length
     parser.add_argument('--context_len', default=220, type=int, help="context length during training")
     parser.add_argument('--eval_context_len', default=220, type=int, help="context length at evaluation time")
-    
+
+    ##wandb
+    parser.add_argument('--wandb', default=True, type=bool, help="use wandb to log experiments")
+    parser.add_argument('--wandb_project', default='ood_random_variation', type=str, help="wandb project name")
+    parser.add_argument('--wandb_group', type=str, help="wandb group name")
+    parser.add_argument('--wandb_name', type=str, help="wandb run name")
     
     return parser.parse_args()
 
@@ -98,8 +122,22 @@ args = parse_args()
 print(args)
 
 
-## Get train dataset & tokenizer
+
+
+## Get tokenizer
 tokenizer, TO_TOKEN, TO_CHAR = get_tokenizer(args)
+
+## Get model
+seed_all(args.init_seed)
+model = get_model(args, tokenizer)
+
+print("^"*100)
+print(model)
+print(f"Number of parameters of the model: {count_parameters(model)}")
+print("^"*100)
+
+## Get train dataset
+seed_all(args.data_seed)
 train_dataset = get_train_dataset(args,tokenizer) 
 
 
@@ -113,14 +151,21 @@ print("-"*100)
 print(batch['input_ids'][-1][batch['mask'][-1]==1], batch['input_ids'][-1], batch['input'][-1])
 print("*"*100)
 
-## Get model
-model = get_model(args, tokenizer)
 
-print("^"*100)
-print(model)
-print(f"Number of parameters of the model: {count_parameters(model)}")
-print("^"*100)
-
+## init wandb
+if args.wandb:
+        name = args.wandb_name if args.wandb_name else f'init_{args.init_seed}_data_{args.data_seed}'
+        group = args.wandb_group if args.wandb_group else 'default'
+        wandb_dir = "results/wandb"
+        wandb.init(
+                dir=wandb_dir,
+                project=args.wandb_project,
+                group=group,
+                name=name,
+                config=args,
+        )
+        wandb.define_metric('Steps')
+        wandb.define_metric("*", step_metric="Steps")
 
 ## train the model
 train(args,model,train_dataset,TO_TOKEN)

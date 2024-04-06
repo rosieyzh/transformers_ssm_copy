@@ -1,6 +1,7 @@
 import torch
 from data_utils import get_eval_dataset
 import numpy as np
+import wandb
 
 def find(s, ch):
     return [i for i, ltr in enumerate(s) if ltr == ch]
@@ -36,7 +37,7 @@ def get_score(args,tokenizer,x,pred,i):
 def evaluation(args, model, tokenizer, TO_TOKEN):
     
 
-    lengths = np.arange(args.min_eval_len, args.max_eval_len)
+    lengths = np.arange(args.min_eval_len, args.max_eval_len, args.eval_len_interval)
     
     str_acc_mean_list = []
     str_acc_std_list = []
@@ -94,6 +95,9 @@ def evaluation(args, model, tokenizer, TO_TOKEN):
         mean_char_acc = char_acc_mean/(len(x)*args.eval_num_batches)
         char_accuracy_list.append(mean_char_acc)
         
+        if args.wandb:
+            wandb.log({f"{args.eval_task}_mean_str_acc": mean_str_acc, f"{args.eval_task}_std_str_acc": std_str_acc, f"{args.eval_task}_mean_char_acc": mean_char_acc, "Steps": ood_length})
+
         print(f"{args.eval_task}; len {ood_length}: {mean_str_acc} +- {std_str_acc}; char: {mean_char_acc}")
     print("\n")        
     return str_acc_mean_list, str_acc_std_list, char_accuracy_list
