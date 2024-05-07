@@ -2,63 +2,66 @@ import torch
 from data_utils import get_eval_dataset
 import numpy as np
 import wandb
+import math
 
 def find(s, ch):
     return [i for i, ltr in enumerate(s) if ltr == ch]
 
 def get_score(args,tokenizer,x,pred,i):
     x_out = tokenizer.decode(x[i])
-    x_out = x_out.split('.')[0] + '.'
     pred_out = tokenizer.decode(pred[i])
 
-    if args.eval_task == "prefix_ngram":
-        index = find(x_out,'|')[-1]
-    elif args.eval_task in ["suffix_ngram","copy","duplicate_ngram"]:
-        index = x_out.index('|')
+    index = x_out.index('>')
+    end_index = x_out.index('*')
+    gt = x_out[index + 1: end_index]
 
+    end_pred_idx = index + len(gt)
+    pred_model = pred_out[index:end_pred_idx]
 
-    if args.eval_task=="suffix_ngram":
-        gt = x_out[index+1+args.n_gram:][:-1]
-        start_idx = index + args.n_gram
-    else:
-        gt = x_out[index+1:][:-1] 
-        start_idx = index
+    print("gt:", gt)
+    print("pred_model:", pred_model)
 
-    end_idx = start_idx + len(gt)
-    pred_model = pred_out[start_idx:end_idx]
+    str_correct = 1
+    num_chars_correct = 0
+    for tok_1, tok_2 in zip(gt, pred_model):
+        if tok_1 != tok_2:
+            str_correct = 0
+        else:
+            num_chars_correct += 1
     
-    str_acc = int(gt==pred_model) 
-    char_acc = sum(map(str.__eq__, gt, pred_model))/max(len(gt),len(pred_model))
-
-    return str_acc, char_acc
+    total_chars = len(gt)
+    return str_correct, num_chars_correct, total_chars
 
 
 
 def evaluation(args, model, tokenizer, TO_TOKEN):
     
 
-    lengths = np.arange(args.min_eval_len, args.max_eval_len, args.eval_len_interval)
+    lengths = np.arange(args.min_eval_len, args.max_eval_len + 1, args.eval_len_interval)
     
     str_acc_mean_list = []
-    str_acc_std_list = []
     char_accuracy_list = []
     print("\n")
     
     for ood_length in lengths:
-        
-        str_acc_batch = np.zeros(args.eval_num_batches)
-        char_acc_mean = 0
+        long_dataset = get_eval_dataset(args, tokenizer, TO_TOKEN, target_min_len=ood_length,target_max_len=ood_length)    
+        if args.eval_task == "count":
+            args.eval_num_batches = int(math.ceil(len(long_dataset.examples) / args.eval_batch_size))
+            print(f"There are {long_dataset.examples} samples, with {args.eval_num_batches} to run.")
 
-        for jj in range(args.eval_num_batches):
+        str_correct_batch = np.zeros(args.eval_num_batches)
+        len_each_batch = np.zeros(args.eval_num_batches)
+        char_correct_batch = np.zeros(args.eval_num_batches)
+        char_len_each_batch = np.zeros(args.eval_num_batches)
 
-            long_dataset = get_eval_dataset(args, tokenizer, TO_TOKEN, target_min_len=ood_length,target_max_len=ood_length)     
+        for jj in range(args.eval_num_batches): 
             batch = next(iter(long_dataset))
             
-            print("-"*100)
-            print(f"EXAMPLE {batch['input'][0]}")
-            print("-"*100)
-            print(batch['input_ids'][-1][batch['mask'][-1]==1], batch['input_ids'][-1], batch['input'][-1])
-            print("*"*100)
+            # print("-"*100)
+            # print(f"EXAMPLE {batch['input'][0]}")
+            # print("-"*100)
+            # print(batch['input_ids'][-1][batch['mask'][-1]==1], batch['input_ids'][-1], batch['input'][-1])
+            # print("*"*100)
             
             x = batch['input_ids'].to('cuda')
             
@@ -79,28 +82,26 @@ def evaluation(args, model, tokenizer, TO_TOKEN):
 
                 ##evaluation
                 for i in range(len(x)):
-                    str_acc, char_acc = get_score(args,tokenizer,x,pred,i) 
+                    str_correct, num_chars_correct, total_chars = get_score(args,tokenizer,x,pred,i) 
+                    str_correct_batch[jj] += str_correct
+                    char_correct_batch[jj] += num_chars_correct
+                    char_len_each_batch[jj] += total_chars
+            
+            len_each_batch[jj] = len(batch["input"])
+            # print(f"current batch: {str_correct_batch[jj]} correct strings, {char_correct_batch[jj]} correct characters, {char_len_each_batch[jj]} number of characters")
 
-                    str_acc_batch[jj] += str_acc
-                    char_acc_mean  += char_acc
-        
-
-        str_acc_batch = str_acc_batch/len(x)
-        mean_str_acc = np.mean(str_acc_batch)
-        std_str_acc = np.std(str_acc_batch)
+        mean_str_acc = np.sum(str_correct_batch) / np.sum(len_each_batch)
+        mean_char_acc = np.sum(char_correct_batch) / np.sum(char_len_each_batch)
 
         str_acc_mean_list.append(mean_str_acc)
-        str_acc_std_list.append(std_str_acc)
-
-        mean_char_acc = char_acc_mean/(len(x)*args.eval_num_batches)
         char_accuracy_list.append(mean_char_acc)
         
         if args.wandb:
-            wandb.log({f"{args.eval_task}_mean_str_acc": mean_str_acc, f"{args.eval_task}_std_str_acc": std_str_acc, f"{args.eval_task}_mean_char_acc": mean_char_acc, "Steps": ood_length})
+            wandb.log({f"{args.eval_task}_mean_str_acc": mean_str_acc, f"{args.eval_task}_mean_char_acc": mean_char_acc, "Steps": ood_length})
 
-        print(f"{args.eval_task}; len {ood_length}: {mean_str_acc} +- {std_str_acc}; char: {mean_char_acc}")
+        print(f"{args.eval_task}; len {ood_length}: {mean_str_acc}; char: {mean_char_acc}")
     print("\n")        
-    return str_acc_mean_list, str_acc_std_list, char_accuracy_list
+    return str_acc_mean_list, char_accuracy_list
 
 
 

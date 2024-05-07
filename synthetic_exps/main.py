@@ -55,12 +55,12 @@ def parse_args():
     parser.add_argument('--data_seed', default=0, type=int, help="seed for setting data ordering")
 
     ##task
-    parser.add_argument('--train_task',choices=["copy","prefix_ngram","suffix_ngram"],
+    parser.add_argument('--train_task',choices=["count", "mode", "copy", "copy_repeat", "sort", "addition", "parity", "and"],
                         required=True, help="tasks to train the model")
-    parser.add_argument('--eval_task',choices=["copy","prefix_ngram","suffix_ngram","duplicate_ngram"],
+    parser.add_argument('--eval_task',choices=["count", "mode", "copy", "copy_repeat", "sort", "addition", "parity", "and"],
                         required=True, help="tasks to evaluate the model")
     
-    parser.add_argument('--vocab_size', default=26, type=int, help="vocabulary size in the strings. maximum is 26.")
+    parser.add_argument('--vocab_size', default=26, type=int, help="vocabulary size in the strings. for some tasks, this will be set by default.")
     
     parser.add_argument('--n_gram', default=0, type=int, 
             help='''length of the n-gram when training/evaluating on 'prefix_ngram', 'suffix_ngram', 'duplicate_ngram'.
@@ -83,6 +83,8 @@ def parse_args():
     #optimization
     parser.add_argument('--scheduler', default="linear", type=str, help="choice of scheduler")
     parser.add_argument('--lr', default=1e-5, type=float, help="choice of learning rate")
+    parser.add_argument('--wd', default=0.1, type=float, help="weight decay")
+    parser.add_argument('--grad_clip', default=1.0, type=float, help="gradient clipping")
     parser.add_argument('--warmup', default=500, type=int, help="number of warmup steps")
     parser.add_argument('--epochs', default=1, type=int, help="number of epochs")
     parser.add_argument('--steps', default=2000, type=int, help="number of steps for each epoch")
@@ -125,6 +127,11 @@ print(args)
 
 
 ## Get tokenizer
+
+if args.train_task in ["copy_repeat", "parity", "and"]: # Ensure vocab size is correct for Boolean tasks
+        assert args.vocab_size == 2, f"Vocab size for Boolean tasks and copying with repeat tokens should be 2, but is {args.vocab_size}."
+elif args.train_task in ["addition"]:
+        assert args.vocab_size == 10, f"Vocab size for addition should be 2, but is {args.vocab_size}."
 tokenizer, TO_TOKEN, TO_CHAR = get_tokenizer(args)
 
 ## Get model
@@ -156,7 +163,7 @@ print("*"*100)
 if args.wandb:
         name = args.wandb_name if args.wandb_name else f'init_{args.init_seed}_data_{args.data_seed}'
         group = args.wandb_group if args.wandb_group else 'default'
-        wandb_dir = "results/wandb"
+        wandb_dir = "results/"
         wandb.init(
                 dir=wandb_dir,
                 project=args.wandb_project,
@@ -182,7 +189,7 @@ print("###EVALUATION")
 
 model.eval()
 
-str_acc_mean_list, str_acc_std_list, char_accuracy_list = evaluation(args, model,tokenizer,TO_TOKEN)
+str_acc_mean_list, char_accuracy_list = evaluation(args, model,tokenizer,TO_TOKEN)
 
 
 print(args)

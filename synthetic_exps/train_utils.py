@@ -23,7 +23,7 @@ def ce_loss(inputs, logits, mask, TO_TOKEN):
 
 def get_optimizer(model,args):
     
-    optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.1)
+    optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
     return optimizer
 
 def custom_get_scheduler(optimizer, args, num_training_steps):
@@ -99,7 +99,7 @@ def train(args,model, train_dataset, TO_TOKEN):
             count[-1] += 1
             accelerator.backward(loss)
             if step % gradient_accumulation_steps == 0:
-                accelerator.clip_grad_norm_(model.parameters(), 1.0)
+                accelerator.clip_grad_norm_(model.parameters(), args.grad_clip)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
